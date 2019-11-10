@@ -1,0 +1,92 @@
+#
+# Copyright (c) 2018, NVIDIA CORPORATION. All rights reserved
+#
+# Permission is hereby granted, free of charge, to any person obtaining
+# a copy of this software and associated documentation files
+# (the "Software"), to deal in the Software without restriction,
+# including without limitation the rights to use, copy, modify, merge,
+# publish, distribute, sublicense, and/or sell copies of the Software,
+# and to permit persons to whom the Software is furnished to do so,
+# subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be
+# included in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+# IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+# CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+# TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#
+
+/**************** TOS BOOT PROFILER *********************/
+
+REQUIREMENTS ---------------------------------------------------->
+
+1. Provide accurate timestamp records for Trusted OS boot-flow events.
+   This includes events in ATF and Trusty during platform boot.
+2. Collect/Store records in memory that can be retrieved later
+3. Maintain a low impact on boot time and avoid unnecessary spew
+   to UART during platform boot
+4. Ensure the collected/stored records are retrieved correctly after boot
+   from the bootloader_debug kernel driver
+5. Be independent of SYSRAM by design (to align with t19x requirements)
+   use a shared DRAM page received from mb2 instead
+6. Write all logs to mb2 profiler carveout so that all
+   profiler records exist in the same place
+
+
+DESCRIPTION ----------------------------------------------------->
+
+Platform Boot time is a key performance index for automotive OEMs.
+For this reason, there was a requirement for a boot profiling tool for Trusted OS (TOS).
+Such a tool already exists for MB2 bootloader and BPMP firmware.
+This tool is designed to profile ATF and TOS in a similar way.
+
+
+The TOS boot profiler is implemented as a common library in ATF and TOS
+that individual components of the module can link with and add profiler records
+with associated timestamps.
+It receives a NS-DRAM address from the bootloader (that is passed as a boot argument).
+It then maps a page of memory from that address and writes profiler records
+to the page during platform boot.
+After boot, the records are retrieved by the tegra_bootloaer_debug kernel driver
+which reads all the early boot profile records printed to the common memory location
+and prints it to console.
+
+API REFERENCE --------------------------------------------------->
+
+APIs are common for TOS and ATF. The design of the boot_profiler
+was based on tegrabl_profiler (mb2 profiler)
+
+boot_profiler_init:
+Receive NS-DRAM base addr from mb2 and initialize profiler_base accordingly
+
+boot_profiler_get_timestamp:
+Read TEGRA_TSCUS timer register for time since boot value
+
+boot_profiler_record:
+Add a profiler record and current timestamp to memory
+This is the primary outward facing api call that linked modules
+will call to add a profiler record
+
+boot_profiler_prerecorded:
+Add a profiler_record to memory but with a specific timestamp (passed as an argument)
+
+boot_profiler_data_printnow:
+[DEBUG ONLY] Print all currently collected records to console.
+This functions spews to UART and will affect boot times. It is not
+enabled for DEBUG builds by default and the developer needs to modify code
+to enable these prints
+
+boot_profiler_deinit:
+Unmap NS_DRAM memory and other internal clean up
+
+/*** Static Utility functions ***/
+
+boot_profiler_add_record:
+Add a record to memory, keep track of total record count
+
+/*************************************************************/

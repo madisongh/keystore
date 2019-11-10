@@ -1,0 +1,1 @@
+tegra/public/lk_inc.mk

@@ -1,0 +1,43 @@
+This file describe how to support multi-guest-trusty in hypvervisor.
+If you are working on a non-hypervisor environment, please ignore it.
+
+In a hypervisor environment, trusty may need support 2 or more guestOS.
+These guestOS may have same TAs, their UUID are same too, so we need an
+extra flag to find the correct TA. Original trusty use UUID to find TAs,
+new design use VMID + UUID to find TAs. The VMID comes from an extra header
+of each TA, this header is added during bind stage. the header format as below:
+
+Total 32 bytes:
+Task magic strings(10 bytes) + vmid(2 bytes) + TA data lens
+others are 0
+
+e.g.
+
+"4E564755 45535454 41534B00 31003531"    |  NVGUESTTASK 1 51
+"38333736 00000000 00000000 00000000"    |  8376
+
+To enable this feature, a mk file named trusty.mk is needed.
+Trusty makefile will check whether trusty.mk exist during bind,
+If the mk exist, it will link the TAs listed in the mk file and
+  generate tos.img again.
+
+The trusty.mk locate in
+$(TOP)/foundation/foundation/meta/pct/$(PCT)/trusty.mk
+Please define below items in this mk file.
+
+1. MULTI_GUEST_TRUSTY_VMID_ALL
+   - supported guest-OS ID list.
+     if 2 guest-OS has trusty support, the define as below:
+	MULTI_GUEST_TRUSTY_VMID_ALL := 1 2
+
+2. MULTI_GUEST_TRUSTY_xxx_TA
+   - TAs for guest-OS ID xxx.
+   - xxx comes from the MULTI_GUEST_TRUSTY_VMID_ALL define
+     if 2 guest-OS has trusty support and they have 2 TAs
+     the define as below:
+	MULTI_GUEST_TRUSTY_1_TA := app/ote/sample_service1 \
+                                   app/ote/sample_service2
+	MULTI_GUEST_TRUSTY_2_TA := app/ote/sample_service1
+	MULTI_GUEST_TRUSTY_2_TA += app/ote/sample_service2
+
+NOTE: MULTI_GUEST_TRUSTY_xxx_TA can't be "NULL".
