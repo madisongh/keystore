@@ -48,6 +48,7 @@
 #endif
 
 #define IOCTL_MAP_EKS_TO_USER	IOCTL_NR(0x01U, IOCTL_PUBLIC_MASK)
+#define IOCTL_GET_DEVICE_UID	IOCTL_NR(0x02U, IOCTL_PUBLIC_MASK)
 
 typedef struct {
 	uint32_t eks_addr_ptr;
@@ -60,5 +61,6 @@ typedef struct {
  * Unmapping this memory is the responsibility of the caller TA.
  */
 int32_t ioctl_map_eks_to_user(ioctl_map_eks_params p);
+int32_t ioctl_get_device_uid(uint32_t user_ptr);
 
 #endif /* __LIB_IOCTL_H */

@@ -29,6 +29,7 @@
 
 #include <lib/trusty/ioctl.h>
 #include <lib/trusty/trusty_app.h>
+#include <platform/boot_params.h>
 #include <platform/platform_p.h>
 #include <trusty_std.h>
 
@@ -72,6 +73,16 @@ int32_t sys_std_platform_ioctl(uint32_t fd, uint32_t cmd, user_addr_t user_ptr)
 					sizeof(ioctl_map_eks_params));
 
 			return ioctl_map_eks_to_user(params);
+
+		case IOCTL_GET_DEVICE_UID:
+			if (user_ptr == NULL ||
+			    !valid_address((vaddr_t)user_ptr,
+					   sizeof(uint32_t) * DEVICE_UID_SIZE_WORDS)) {
+				dprintf(CRITICAL, "%s error: Invalid arguments\n",
+						__func__);
+				return ERR_INVALID_ARGS;
+			}
+			return ioctl_get_device_uid(user_ptr);
 
 		default:
 			ret = sys_std_platform_ioctl_partner(fd, cmd, user_ptr);

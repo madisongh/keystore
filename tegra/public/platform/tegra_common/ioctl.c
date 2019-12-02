@@ -29,6 +29,8 @@
 #include <platform/platform_p.h>
 #include <platform/boot_params.h>
 
+extern uint32_t device_uid[DEVICE_UID_SIZE_WORDS];
+
 static bool valid_address(vaddr_t addr, size_t size)
 {
 	return uthread_is_valid_range(uthread_get_current(), addr, size);
@@ -90,5 +92,15 @@ int32_t ioctl_map_eks_to_user(ioctl_map_eks_params p)
 	copy_to_user((user_addr_t)p.map_addr_ptr, &vaddr, sizeof(uint32_t));
 	copy_to_user((user_addr_t)p.map_size_ptr, &size, sizeof(uint32_t));
 
+	return NO_ERROR;
+}
+
+int32_t ioctl_get_device_uid(user_addr_t user_ptr)
+{
+	if (user_ptr == NULL) {
+		dprintf(CRITICAL, "%s: ERROR: attempting to access NULL pointer\n", __func__);
+		return ERR_INVALID_ARGS;
+	}
+	copy_to_user(user_ptr, device_uid, sizeof(device_uid));
 	return NO_ERROR;
 }
