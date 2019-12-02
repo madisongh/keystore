@@ -30,6 +30,4 @@ TOP := $(TEGRA_TOP)
 
 # L4T only builds some test applications
 TRUSTY_ALL_USER_TASKS := \
-	sample/ipc-unittest/main \
-	sample/ipc-unittest/srv \
-	keystore-demo
+	keystore
