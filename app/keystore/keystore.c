@@ -30,33 +30,137 @@
 
 #include <trusty_std.h>
 #include <lib/trusty/ioctl.h>
+#include <trusty_std.h>
 
+#include <app/keystore/uuids.h>
 #include <keystore.h>
 #include <keystore_tests.h>
 #include <tegra_se.h>
+#include <fuse.h>
+#include <openssl/aes.h>
+#include <openssl/sha.h>
 
-#define  AES_KEY_128_SIZE		16
-#define  EKB_SECRET_STRING_LENGTH 	16
+#define AES_KEY_128_SIZE	16
+#define MAX_MSG_SIZE		2048
 
 /*
  * key derived from HW-backed key which may used to
  * encrypt/decrypt EKB.
  */
-uint8_t ekb_ek[AES_KEY_128_SIZE] = {0};
+static uint8_t ekb_ek[AES_KEY_128_SIZE] = {0};
 
 /*
- * Fixed vector used to derive EKB_EK.
+ * Fixed vector used as salt added to the KEK for
+ * generating the key for decrypting the EKB.
+ * Must be 16 bytes.
  */
-union {
-	uint32_t fv_words[4];
-	uint8_t  fv_bytes[16];
-} fv;
+#ifndef KEYSTORE_FV
+#define KEYSTORE_FV 0x6E, 0xB1, 0x1D, 0x57, 0x25, 0x6E, 0xA5, 0x52, 0xC6, 0x22, 0x9F, 0x92, 0x02, 0x68, 0x62, 0xB2
+#endif
+static uint8_t keystore_fv[16] = { KEYSTORE_FV };
+
+/*
+ * IV for AES-128-CBC decryption of the EKB contents.
+ * Must be 16 bytes.
+ */
+#ifndef KEYSTORE_IV
+#define KEYSTORE_IV 0x96, 0x68, 0x52, 0x3C, 0xB4, 0x95, 0x87, 0x9F, 0x96, 0x55, 0xAB, 0x77, 0x66, 0x55, 0x0F, 0x61
+#endif
+static uint8_t keystore_iv[16] = { KEYSTORE_IV };
+
+/*
+ * Device unique ID, used as salt added to
+ * the key extracted from the EKB when generating
+ * a passphrase sent to the NS client.
+ */
+static uint8_t uid[16];
+
+/*
+ * Decrypted EKB:
+ *
+ *   keystore magic number (4 bytes)
+ *   TLVs:
+ *      tag (2 bytes)
+ *      len (2 bytes)
+ *      value (len bytes)
+ *
+ *  recognized tags:
+ *    0 = end of list
+ *    1 = dm-crypt passphrase base (will be sha256sum'ed with device UID)
+ */
+#define KEYSTORE_MAGIC 0xABECEDEE
+#define KEYSTORE_TAG_EOL	0
+#define KEYSTORE_TAG_DMCPP	1
+struct ekb_tlv {
+	uint16_t tag;
+	uint16_t len;
+} __attribute__((packed));
+
+static uint8_t *dmcrypt_passphrase = NULL;
+static size_t dmcpplen = 0;
 
 /* Facilitates the IOCTL_MAP_EKS_TO_USER ioctl() */
 union ptr_to_int_bridge {
 	uint32_t val;
 	void *ptr;
 };
+
+typedef void (*event_handler_proc_t) (const uevent_t *ev);
+
+typedef struct tipc_event_handler {
+	event_handler_proc_t proc;
+	void *priv;
+} tipc_event_handler_t;
+
+typedef struct tipc_srv {
+	const char *name;
+	uint   msg_num;
+	size_t msg_size;
+	uint   port_flags;
+	size_t port_state_size;
+	size_t chan_state_size;
+	event_handler_proc_t port_handler;
+	event_handler_proc_t chan_handler;
+} tipc_srv_t;
+
+typedef struct tipc_srv_state {
+	const struct tipc_srv *service;
+	handle_t port;
+	void *priv;
+	tipc_event_handler_t handler;
+} tipc_srv_state_t;
+
+static void getkey_handle_port(const uevent_t *ev);
+static void bootdone_handle_port(const uevent_t *ev);
+
+static const struct tipc_srv _services[] = {
+	{
+		.name = "private.keystore.getkey",
+		.msg_num = 2,
+		.msg_size = MAX_MSG_SIZE,
+		.port_flags = IPC_PORT_ALLOW_NS_CONNECT,
+		.port_handler = getkey_handle_port,
+		.chan_handler = NULL,
+	},
+	{
+		.name = "private.keystore.bootdone",
+		.msg_num = 2,
+		.msg_size = MAX_MSG_SIZE,
+		.port_flags = IPC_PORT_ALLOW_NS_CONNECT,
+		.port_handler = bootdone_handle_port,
+		.chan_handler = NULL,
+	},
+};
+
+static struct tipc_srv_state _srv_states[] = {
+	{
+		.port = INVALID_IPC_HANDLE,
+	},
+};
+
+static bool stopped = false;
+static bool fused;
+static int  keysent = false;
 
 /*
  * @brief copies EKB contents to TA memory
@@ -119,14 +223,349 @@ err_size:
 	return r;
 }
 
+static int decrypt_ekb(uint8_t *ekb, size_t ekb_size)
+{
+	AES_KEY key;
+	uint8_t *buf, *bp;
+	size_t remain;
+	struct ekb_tlv *tlv;
+	int r = ERR_GENERIC;
+
+	if (ekb_size < sizeof(uint32_t) + sizeof(struct ekb_tlv)) {
+		TLOGE("%s: keystore size invalid\n", __func__);
+		return r;
+	}
+	if (AES_set_decrypt_key(ekb_ek, sizeof(ekb_ek)*8, &key) != 0) {
+		TLOGE("%s: failed to set decryption key\n", __func__);
+		return r;
+	}
+
+	buf = calloc(1, ekb_size);
+	if (buf == NULL)
+		return ERR_NO_MEMORY;
+	AES_cbc_encrypt(ekb, buf, ekb_size, &key, keystore_iv, AES_DECRYPT);
+	if (*(uint32_t *)buf != KEYSTORE_MAGIC) {
+		TLOGE("%s: bad magic\n", __func__);
+		goto fail;
+	}
+	remain = ekb_size - sizeof(uint32_t);
+	tlv = (struct ekb_tlv *) (buf + sizeof(uint32_t));
+	while (remain >= sizeof(struct ekb_tlv)) {
+		remain -= sizeof(struct ekb_tlv);
+		bp = (uint8_t *) (tlv + 1);
+		if (tlv->tag == KEYSTORE_TAG_EOL) {
+			TLOGI("%s: end of keystore\n", __func__);
+			break;
+		}
+		if (tlv->tag == KEYSTORE_TAG_DMCPP) {
+			if (remain < tlv->len) {
+				TLOGE("%s: DMCPP len mismatch\n", __func__);
+				goto fail;
+			}
+			if (dmcrypt_passphrase != NULL) {
+				TLOGE("%s: DMCPP repeat\n", __func__);
+				goto fail;
+			}
+			dmcrypt_passphrase = calloc(1, tlv->len);
+			if (dmcrypt_passphrase == NULL ) {
+				TLOGE("%s: DMCPP alloc error\n", __func__);
+				r = ERR_NO_MEMORY;
+				goto fail;
+			}
+			memcpy(dmcrypt_passphrase, bp, tlv->len);
+			dmcpplen = tlv->len;
+		}
+		bp += tlv->len;
+		remain -= tlv->len;
+		tlv = (struct ekb_tlv *) bp;
+	}
+	r = NO_ERROR;
+fail:
+	memset(buf, 0, ekb_size);
+	free(buf);
+	return r;
+}
+
+/************************************************************************/
+
+static struct tipc_srv_state *get_srv_state(const uevent_t *ev)
+{
+	return containerof(ev->cookie, struct tipc_srv_state, handler);
+}
+
+static void _destroy_service(struct tipc_srv_state *state)
+{
+	if (!state) {
+		TLOGI("non-null state expected\n");
+		return;
+	}
+
+	/* free state if any */
+	if (state->priv) {
+		free(state->priv);
+		state->priv = NULL;
+	}
+
+	/* close port */
+	if (state->port != INVALID_IPC_HANDLE) {
+		int rc = close(state->port);
+		if (rc != NO_ERROR) {
+			TLOGI("Failed (%d) to close port %d\n",
+			       rc, state->port);
+		}
+		state->port = INVALID_IPC_HANDLE;
+	}
+
+	/* reset handler */
+	state->service = NULL;
+	state->handler.proc = NULL;
+	state->handler.priv = NULL;
+}
+
+
 /*
- * @brief derives ekb_ek, maps EKB to memory, and runs sanity tests
+ *  Create service
+ */
+static int _create_service(const struct tipc_srv *srv,
+                           struct tipc_srv_state *state)
+{
+	if (!srv || !state) {
+		TLOGI("null services specified\n");
+		return ERR_INVALID_ARGS;
+	}
+
+	/* create port */
+	int rc = port_create(srv->name, srv->msg_num, srv->msg_size,
+			     srv->port_flags);
+	if (rc < 0) {
+		TLOGI("Failed (%d) to create port\n", rc);
+		return rc;
+	}
+
+	/* setup port state  */
+	state->port = (handle_t)rc;
+	state->handler.proc = srv->port_handler;
+	state->handler.priv = state;
+	state->service = srv;
+	state->priv = NULL;
+
+	if (srv->port_state_size) {
+		/* allocate port state */
+		state->priv = calloc(1, srv->port_state_size);
+		if (!state->priv) {
+			rc = ERR_NO_MEMORY;
+			goto err_calloc;
+		}
+	}
+
+	/* attach handler to port handle */
+	rc = set_cookie(state->port, &state->handler);
+	if (rc < 0) {
+		TLOGI("Failed (%d) to set cookie on port %d\n",
+		      rc, state->port);
+		goto err_set_cookie;
+	}
+
+	return NO_ERROR;
+
+err_calloc:
+err_set_cookie:
+	_destroy_service(state);
+	return rc;
+}
+
+
+/*
+ *  Restart specified service
+ */
+static int restart_service(struct tipc_srv_state *state)
+{
+	if (!state) {
+		TLOGI("non-null state expected\n");
+		return ERR_INVALID_ARGS;
+	}
+
+	const struct tipc_srv *srv = state->service;
+	_destroy_service(state);
+	return _create_service(srv, state);
+}
+
+/*
+ *  Kill all servoces
+ */
+static void kill_services(void)
+{
+	TLOGI ("Terminating keystore services\n");
+
+	/* close any opened ports */
+	for (uint i = 0; i < countof(_services); i++) {
+		_destroy_service(&_srv_states[i]);
+	}
+}
+
+/*
+ *  Initialize all services
+ */
+static int init_services(void)
+{
+	TLOGI ("Initializing keystore services\n");
+
+	for (uint i = 0; i < countof(_services); i++) {
+		int rc = _create_service(&_services[i], &_srv_states[i]);
+		if (rc < 0) {
+			TLOGI("Failed (%d) to create service %s\n",
+			      rc, _services[i].name);
+			return rc;
+		}
+	}
+
+	return 0;
+}
+
+/*
+ *  Handle common port errors
+ */
+static bool handle_port_errors(const uevent_t *ev)
+{
+	if ((ev->event & IPC_HANDLE_POLL_ERROR) ||
+	    (ev->event & IPC_HANDLE_POLL_HUP) ||
+	    (ev->event & IPC_HANDLE_POLL_MSG) ||
+	    (ev->event & IPC_HANDLE_POLL_SEND_UNBLOCKED)) {
+		/* should never happen with port handles */
+		TLOGI("error event (0x%x) for port (%d)\n",
+		       ev->event, ev->handle);
+
+		/* recreate service */
+		restart_service(get_srv_state(ev));
+		return true;
+	}
+
+	return false;
+}
+
+static void dispatch_event(const uevent_t *ev)
+{
+	if (ev->event == IPC_HANDLE_POLL_NONE) {
+		/* not really an event, do nothing */
+		TLOGI("got an empty event\n");
+		return;
+	}
+
+	if (ev->handle == INVALID_IPC_HANDLE) {
+		/* not a valid handle  */
+		TLOGI("got an event (0x%x) with invalid handle (%d)",
+		      ev->event, ev->handle);
+		return;
+	}
+
+	/* check if we have handler */
+	struct tipc_event_handler *handler = ev->cookie;
+	if (handler && handler->proc) {
+		/* invoke it */
+		handler->proc(ev);
+		return;
+	}
+
+	/* no handler? close it */
+	TLOGI("no handler for event (0x%x) with handle %d\n",
+	       ev->event, ev->handle);
+	close(ev->handle);
+
+	return;
+}
+
+static void getkey_handle_port(const uevent_t *ev)
+{
+	ipc_msg_t msg;
+	iovec_t   iov;
+	uuid_t peer_uuid;
+	unsigned char outkey[SHA256_DIGEST_LENGTH];
+
+	if (handle_port_errors(ev))
+		return;
+
+	if (ev->event & IPC_HANDLE_POLL_READY) {
+		handle_t chan;
+
+		/* incomming connection: accept it */
+		int rc = accept(ev->handle, &peer_uuid);
+		if (rc < 0) {
+			TLOGI("failed (%d) to accept on port %d\n",
+			       rc, ev->handle);
+			return;
+		}
+		chan = (handle_t) rc;
+		if (fused && keysent) {
+			TLOGI("%s: detected repeat offender\n", __func__);
+			memset(outkey, 0, sizeof(outkey));
+		} else if (dmcrypt_passphrase == NULL || dmcpplen == 0) {
+			TLOGE("%s: nothing to return\n", __func__);
+			memset(outkey, 0, sizeof(outkey));
+			SHA256_CTX c;
+			if (!(SHA256_Init(&c) == 0 &&
+			      SHA256_Update(&c, dmcrypt_passphrase, dmcpplen) == 0 &&
+			      SHA256_Update(&c, uid, sizeof(uid)) == 0 &&
+			      SHA256_Final(outkey, &c) == 0)) {
+				TLOGE("%s: outkey generation failed\n", __func__);
+				memset(outkey, 0, sizeof(outkey));
+			}
+		}
+
+		/* send interface uuid */
+		iov.base = outkey;
+		iov.len  = sizeof(outkey);
+		msg.num_iov = 1;
+		msg.iov     = &iov;
+		msg.num_handles = 0;
+		msg.handles  = NULL;
+		rc = send_msg(chan, &msg);
+		if (rc < 0) {
+			TLOGI("failed (%d) to send_msg for chan (%d)\n",
+			      rc, chan);
+		}
+
+		/* and close channel */
+		close(chan);
+		memset(outkey, 0, sizeof(outkey));
+		keysent = true;
+	}
+}
+
+static void bootdone_handle_port(const uevent_t *ev)
+{
+	uuid_t peer_uuid;
+
+	if (handle_port_errors(ev))
+		return;
+
+	if (ev->event & IPC_HANDLE_POLL_READY) {
+		handle_t chan;
+
+		int rc = accept(ev->handle, &peer_uuid);
+		if (rc < 0) {
+			TLOGI("%s: failed (%d) to accept on port %d\n",
+			      __func__, rc, ev->handle);
+			return;
+		}
+		chan = (handle_t) rc;
+		TLOGI("Received boot done notification, stopping\n");
+		stopped = true;
+		rc = close(chan);
+		if (rc != NO_ERROR) {
+			TLOGI("%s: Failed (%d) to close chan %d\n",
+			      __func__, rc, chan);
+		}
+	}
+}
+/*
+ * @brief Keystore main - initiaizes keystore and starts services
  *
  * @return NO_ERROR if successful
  */
 int main(void)
 {
 	uint32_t r;
+	uevent_t event;
 
 	/* Holds ekb contents and EKB content size */
 	uint8_t *ekb_base = NULL;
@@ -134,20 +573,25 @@ int main(void)
 
 	TLOGI("Keystore: starting\n");
 
-	r = ioctl(3, IOCTL_GET_DEVICE_UID, &fv);
+	r = is_device_odm_production_fused(&fused);
+	if (r != NO_ERROR) {
+		TLOGE("%s: failed to get production fuse status (%d). Exiting\n",
+		      __func__, r);
+		return r;
+	}
+
+	r = ioctl(3, IOCTL_GET_DEVICE_UID, uid);
 	if (r != NO_ERROR) {
 		TLOGE("%s: failed to get device UID (%d). Exiting\n",
 		      __func__, r);
 		return r;
 	}
-	TLOGI("%s: device ID: 0x%02x0x%02x0x%02x0x%02x0x%02x0x%02x0x%02x0x%02x0x%02x0x%02x0x%02x0x%02x0x%02x0x%02x0x%02x0x%02x\n",
-	      __func__, fv.fv_bytes[0], fv.fv_bytes[1], fv.fv_bytes[2], fv.fv_bytes[3],
-	      fv.fv_bytes[4], fv.fv_bytes[5], fv.fv_bytes[6], fv.fv_bytes[7],
-	      fv.fv_bytes[8], fv.fv_bytes[9], fv.fv_bytes[10], fv.fv_bytes[11],
-	      fv.fv_bytes[12], fv.fv_bytes[13], fv.fv_bytes[14], fv.fv_bytes[15]);
+	TLOGI("%s: device UID: 0x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",
+	      __func__, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7],
+	      uid[8], uid[9], uid[10], uid[11], uid[12], uid[13], uid[14], uid[15]);
+
 	/*
-	 * Initialize Security Engine (SE) and acquire SE mutex.
-	 * The mutex MUST be acquired before interacting with SE.
+	 * Must acquire SE mutex before using it
 	 */
 	r = se_acquire();
 	if (r != NO_ERROR) {
@@ -155,37 +599,71 @@ int main(void)
 		return r;
 	}
 
-	/*
-	 * Derive EKB_EK by performing AES-ECB encryption on the fixed
-	 * vector (fv) with the key in the KEK2 SE keyslot.
-	 */
-	r = se_derive_ekb_ek(ekb_ek, sizeof(ekb_ek), fv.fv_bytes, sizeof(fv));
+	r = se_derive_ekb_ek(ekb_ek, sizeof(ekb_ek), keystore_fv, sizeof(keystore_fv));
 	if (r != NO_ERROR)
 		TLOGE("%s: failed to derive EKB (%d)\n", __func__, r);
 
-	/* Clear keys from SE keyslots */
+
 	r = se_clear_aes_keyslots();
 	if (r != NO_ERROR)
 		TLOGE("%s: failed to clear SE keyslots (%d)\n", __func__, r);
 
-	/* Release SE mutex */
 	se_release();
 
 #if defined(ENABLE_TEST_EKB_DERIVATION)
-	r = ekb_ek_derivation_test(fv.fv_bytes, ekb_ek);
+	r = ekb_ek_derivation_test(keystore_fv, ekb_ek);
 	if (r != NO_ERROR)
 		TLOGE("%s: EKB_EK derivation test failed (%d)\n", __func__, r);
 #endif
 
-	/* Get EKB */
+
 	r = get_ekb(&ekb_base, &ekb_size);
 	if ((r != NO_ERROR) || (ekb_base == NULL) || (ekb_size == 0)) {
 		TLOGE("%s: failed to get EKB (%d). Exiting\n", __func__, r);
-		goto fail;
+		free(ekb_base);
+		return r;
 	}
 	TLOGI("%s: EKB retrieved, size=%u\n", __func__, ekb_size);
-
-fail:
+	r = decrypt_ekb(ekb_base, ekb_size);
 	free(ekb_base);
-	return r;
+	ekb_base = NULL;
+	if (r != NO_ERROR) {
+		TLOGE("%s: failed to decrypt EKB (%d). Exiting\n", __func__, r);
+		return r;
+	}
+
+	r = init_services();
+	if (r != NO_ERROR ) {
+		TLOGI("Failed (%d) to init service", r);
+		kill_services();
+		return r;
+	}
+
+
+	while (!stopped) {
+		int rc;
+		event.handle = INVALID_IPC_HANDLE;
+		event.event  = 0;
+		event.cookie = NULL;
+		rc = wait_any(&event, -1);
+		if (rc < 0) {
+			TLOGI("wait_any failed (%d)", rc);
+			continue;
+		}
+		if (rc == NO_ERROR) { /* got an event */
+			dispatch_event(&event);
+		}
+	}
+
+	kill_services();
+	if (dmcrypt_passphrase != NULL) {
+		if (dmcpplen != 0)
+			memset(dmcrypt_passphrase, 0, dmcpplen);
+		free(dmcrypt_passphrase);
+		dmcpplen = 0;
+	}
+	memset(keystore_iv, 0, sizeof(keystore_iv));
+	memset(keystore_fv, 0, sizeof(keystore_fv));
+	memset(ekb_ek, 0, sizeof(ekb_ek));
+	return NO_ERROR;
 }
