@@ -33,6 +33,8 @@
 #include <trusty_std.h>
 
 #include <app/keystore/uuids.h>
+#include <app/keystore/vectors.h>
+#include <app/keystore/keyblob.h>
 #include <keystore.h>
 #include <keystore_tests.h>
 #include <tegra_se.h>
@@ -49,23 +51,7 @@
  */
 static uint8_t ekb_ek[AES_KEY_128_SIZE] = {0};
 
-/*
- * Fixed vector used as salt added to the KEK for
- * generating the key for decrypting the EKB.
- * Must be 16 bytes.
- */
-#ifndef KEYSTORE_FV
-#define KEYSTORE_FV 0x6E, 0xB1, 0x1D, 0x57, 0x25, 0x6E, 0xA5, 0x52, 0xC6, 0x22, 0x9F, 0x92, 0x02, 0x68, 0x62, 0xB2
-#endif
 static uint8_t keystore_fv[16] = { KEYSTORE_FV };
-
-/*
- * IV for AES-128-CBC decryption of the EKB contents.
- * Must be 16 bytes.
- */
-#ifndef KEYSTORE_IV
-#define KEYSTORE_IV 0x96, 0x68, 0x52, 0x3C, 0xB4, 0x95, 0x87, 0x9F, 0x96, 0x55, 0xAB, 0x77, 0x66, 0x55, 0x0F, 0x61
-#endif
 static uint8_t keystore_iv[16] = { KEYSTORE_IV };
 
 /*
@@ -75,29 +61,10 @@ static uint8_t keystore_iv[16] = { KEYSTORE_IV };
  */
 static uint8_t uid[16];
 
-/*
- * Decrypted EKB:
- *
- *   keystore magic number (4 bytes)
- *   TLVs:
- *      tag (2 bytes)
- *      len (2 bytes)
- *      value (len bytes)
- *
- *  recognized tags:
- *    0 = end of list
- *    1 = dm-crypt passphrase base (will be sha256sum'ed with device UID)
- */
-#define KEYSTORE_MAGIC 0xABECEDEE
-#define KEYSTORE_TAG_EOL	0
-#define KEYSTORE_TAG_DMCPP	1
-struct ekb_tlv {
-	uint16_t tag;
-	uint16_t len;
-} __attribute__((packed));
-
 static uint8_t *dmcrypt_passphrase = NULL;
 static size_t dmcpplen = 0;
+static uint8_t *file_passphrase = NULL;
+static size_t filepplen = 0;
 
 /* Facilitates the IOCTL_MAP_EKS_TO_USER ioctl() */
 union ptr_to_int_bridge {
@@ -130,16 +97,25 @@ typedef struct tipc_srv_state {
 	tipc_event_handler_t handler;
 } tipc_srv_state_t;
 
-static void getkey_handle_port(const uevent_t *ev);
+static void getdmckey_handle_port(const uevent_t *ev);
+static void getfilekey_handle_port(const uevent_t *ev);
 static void bootdone_handle_port(const uevent_t *ev);
 
 static const struct tipc_srv _services[] = {
 	{
-		.name = "private.keystore.getkey",
+		.name = "private.keystore.getdmckey",
 		.msg_num = 2,
 		.msg_size = MAX_MSG_SIZE,
 		.port_flags = IPC_PORT_ALLOW_NS_CONNECT,
-		.port_handler = getkey_handle_port,
+		.port_handler = getdmckey_handle_port,
+		.chan_handler = NULL,
+	},
+	{
+		.name = "private.keystore.getfilekey",
+		.msg_num = 2,
+		.msg_size = MAX_MSG_SIZE,
+		.port_flags = IPC_PORT_ALLOW_NS_CONNECT,
+		.port_handler = getfilekey_handle_port,
 		.chan_handler = NULL,
 	},
 	{
@@ -159,8 +135,9 @@ static struct tipc_srv_state _srv_states[] = {
 };
 
 static bool stopped = false;
+static bool bootdone = false;
 static bool fused;
-static int  keysent = false;
+static int  dmcppsent = false;
 
 /*
  * @brief copies EKB contents to TA memory
@@ -227,7 +204,7 @@ static int decrypt_ekb(uint8_t *ekb, size_t ekb_size)
 {
 	AES_KEY key;
 	uint8_t *buf, *bp;
-	size_t remain;
+	ssize_t remain;
 	struct ekb_tlv *tlv;
 	int r = ERR_GENERIC;
 
@@ -256,8 +233,7 @@ static int decrypt_ekb(uint8_t *ekb, size_t ekb_size)
 		if (tlv->tag == KEYSTORE_TAG_EOL) {
 			TLOGI("%s: end of keystore\n", __func__);
 			break;
-		}
-		if (tlv->tag == KEYSTORE_TAG_DMCPP) {
+		} else if (tlv->tag == KEYSTORE_TAG_DMCPP) {
 			if (remain < tlv->len) {
 				TLOGE("%s: DMCPP len mismatch\n", __func__);
 				goto fail;
@@ -274,6 +250,29 @@ static int decrypt_ekb(uint8_t *ekb, size_t ekb_size)
 			}
 			memcpy(dmcrypt_passphrase, bp, tlv->len);
 			dmcpplen = tlv->len;
+		} else if (tlv->tag == KEYSTORE_TAG_FILEPP) {
+			if (remain < tlv->len) {
+				TLOGE("%s: FILEPP len mismatch\n", __func__);
+				goto fail;
+			}
+			if (file_passphrase != NULL) {
+				TLOGE("%s: FILEPP repeat\n", __func__);
+				goto fail;
+			}
+			file_passphrase = calloc(1, tlv->len);
+			if (file_passphrase == NULL ) {
+				TLOGE("%s: FILEPP alloc error\n", __func__);
+				r = ERR_NO_MEMORY;
+				goto fail;
+			}
+			memcpy(file_passphrase, bp, tlv->len);
+			dmcpplen = tlv->len;
+		} else {
+			TLOGI("Unrecognized keyblob tag %d\n", __func__, tlv_>tag);
+			if (remain < tlv->len) {
+				TLOGE("%s: TLV len error\n", __func__);
+				goto fail;
+			}
 		}
 		bp += tlv->len;
 		remain -= tlv->len;
@@ -474,7 +473,7 @@ static void dispatch_event(const uevent_t *ev)
 	return;
 }
 
-static void getkey_handle_port(const uevent_t *ev)
+static void getdmckey_handle_port(const uevent_t *ev)
 {
 	ipc_msg_t msg;
 	iovec_t   iov;
@@ -495,7 +494,7 @@ static void getkey_handle_port(const uevent_t *ev)
 			return;
 		}
 		chan = (handle_t) rc;
-		if (fused && keysent) {
+		if (fused && (bootdone || dmcppsent)) {
 			TLOGI("%s: detected repeat offender\n", __func__);
 			memset(outkey, 0, sizeof(outkey));
 		} else if (dmcrypt_passphrase == NULL || dmcpplen == 0) {
@@ -527,7 +526,60 @@ static void getkey_handle_port(const uevent_t *ev)
 		/* and close channel */
 		close(chan);
 		memset(outkey, 0, sizeof(outkey));
-		keysent = true;
+		dmcppsent = true;
+	}
+}
+
+static void getfilekey_handle_port(const uevent_t *ev)
+{
+	ipc_msg_t msg;
+	iovec_t   iov;
+	uuid_t peer_uuid;
+	unsigned char outkey[SHA256_DIGEST_LENGTH];
+
+	if (handle_port_errors(ev))
+		return;
+
+	if (ev->event & IPC_HANDLE_POLL_READY) {
+		handle_t chan;
+
+		/* incomming connection: accept it */
+		int rc = accept(ev->handle, &peer_uuid);
+		if (rc < 0) {
+			TLOGI("failed (%d) to accept on port %d\n",
+			       rc, ev->handle);
+			return;
+		}
+		chan = (handle_t) rc;
+		if (file_passphrase == NULL || filepplen == 0) {
+			TLOGE("%s: nothing to return\n", __func__);
+			memset(outkey, 0, sizeof(outkey));
+			SHA256_CTX c;
+			if (!(SHA256_Init(&c) == 0 &&
+			      SHA256_Update(&c, file_passphrase, filepplen) == 0 &&
+			      SHA256_Update(&c, uid, sizeof(uid)) == 0 &&
+			      SHA256_Final(outkey, &c) == 0)) {
+				TLOGE("%s: outkey generation failed\n", __func__);
+				memset(outkey, 0, sizeof(outkey));
+			}
+		}
+
+		/* send interface uuid */
+		iov.base = outkey;
+		iov.len  = sizeof(outkey);
+		msg.num_iov = 1;
+		msg.iov     = &iov;
+		msg.num_handles = 0;
+		msg.handles  = NULL;
+		rc = send_msg(chan, &msg);
+		if (rc < 0) {
+			TLOGI("failed (%d) to send_msg for chan (%d)\n",
+			      rc, chan);
+		}
+
+		/* and close channel */
+		close(chan);
+		memset(outkey, 0, sizeof(outkey));
 	}
 }
 
@@ -549,7 +601,7 @@ static void bootdone_handle_port(const uevent_t *ev)
 		}
 		chan = (handle_t) rc;
 		TLOGI("Received boot done notification, stopping\n");
-		stopped = true;
+		bootdone = true
 		rc = close(chan);
 		if (rc != NO_ERROR) {
 			TLOGI("%s: Failed (%d) to close chan %d\n",
