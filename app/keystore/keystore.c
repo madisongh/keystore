@@ -101,6 +101,16 @@ static void getdmckey_handle_port(const uevent_t *ev);
 static void getfilekey_handle_port(const uevent_t *ev);
 static void bootdone_handle_port(const uevent_t *ev);
 
+static void datasink_handle_chan(const uevent_t *ev);
+
+/* datasink service has no per channel state so we can
+ * just attach handler struct directly to channel handle
+ */
+static struct tipc_event_handler _datasink_chan_handler = {
+	.proc = datasink_handle_chan,
+	.priv = NULL,
+};
+
 static const struct tipc_srv _services[] = {
 	{
 		.name = "private.keystore.getdmckey",
@@ -129,6 +139,12 @@ static const struct tipc_srv _services[] = {
 };
 
 static struct tipc_srv_state _srv_states[] = {
+	{
+		.port = INVALID_IPC_HANDLE,
+	},
+	{
+		.port = INVALID_IPC_HANDLE,
+	},
 	{
 		.port = INVALID_IPC_HANDLE,
 	},
@@ -227,11 +243,11 @@ static int decrypt_ekb(uint8_t *ekb, size_t ekb_size)
 	}
 	remain = ekb_size - sizeof(uint32_t);
 	tlv = (struct ekb_tlv *) (buf + sizeof(uint32_t));
-	while (remain >= sizeof(struct ekb_tlv)) {
+	while (remain >= (ssize_t) sizeof(struct ekb_tlv)) {
 		remain -= sizeof(struct ekb_tlv);
 		bp = (uint8_t *) (tlv + 1);
 		if (tlv->tag == KEYSTORE_TAG_EOL) {
-			TLOGI("%s: end of keystore\n", __func__);
+			TLOGI("End of keystore\n");
 			break;
 		} else if (tlv->tag == KEYSTORE_TAG_DMCPP) {
 			if (remain < tlv->len) {
@@ -250,6 +266,7 @@ static int decrypt_ekb(uint8_t *ekb, size_t ekb_size)
 			}
 			memcpy(dmcrypt_passphrase, bp, tlv->len);
 			dmcpplen = tlv->len;
+			TLOGI("Acquired DMCPP\n");
 		} else if (tlv->tag == KEYSTORE_TAG_FILEPP) {
 			if (remain < tlv->len) {
 				TLOGE("%s: FILEPP len mismatch\n", __func__);
@@ -266,9 +283,10 @@ static int decrypt_ekb(uint8_t *ekb, size_t ekb_size)
 				goto fail;
 			}
 			memcpy(file_passphrase, bp, tlv->len);
-			dmcpplen = tlv->len;
+			filepplen = tlv->len;
+			TLOGI("Acquired FILEPP\n");
 		} else {
-			TLOGI("Unrecognized keyblob tag %d\n", __func__, tlv_>tag);
+			TLOGI("Unrecognized keyblob tag %d\n", tlv->tag);
 			if (remain < tlv->len) {
 				TLOGE("%s: TLV len error\n", __func__);
 				goto fail;
@@ -473,6 +491,63 @@ static void dispatch_event(const uevent_t *ev)
 	return;
 }
 
+static int datasink_handle_msg(const uevent_t *ev)
+{
+	int rc;
+	ipc_msg_info_t inf;
+
+	/* for all messages */
+	for (;;) {
+		/* get message */
+		rc = get_msg(ev->handle, &inf);
+		if (rc == ERR_NO_MSG)
+			break; /* no new messages */
+
+		if (rc != NO_ERROR) {
+			TLOGI("failed (%d) to get_msg for chan (%d)\n",
+			      rc, ev->handle);
+			return rc;
+		}
+
+		/* and retire it without actually reading  */
+		rc = put_msg(ev->handle, inf.id);
+		if (rc != NO_ERROR) {
+			TLOGI("failed (%d) to putt_msg for chan (%d)\n",
+			      rc, ev->handle);
+			return rc;
+		}
+	}
+
+	return NO_ERROR;
+}
+
+/*
+ *  Datasink service channel handler
+ */
+static void datasink_handle_chan(const uevent_t *ev)
+{
+	if ((ev->event & IPC_HANDLE_POLL_ERROR) ||
+	    (ev->event & IPC_HANDLE_POLL_SEND_UNBLOCKED)) {
+		/* close it as it is in an error state */
+		TLOGI("error event (0x%x) for chan (%d)\n",
+		       ev->event, ev->handle);
+		close(ev->handle);
+		return;
+	}
+
+	if (ev->event & IPC_HANDLE_POLL_MSG) {
+		if (datasink_handle_msg(ev) != 0) {
+			close(ev->handle);
+			return;
+		}
+	}
+
+	if (ev->event & IPC_HANDLE_POLL_HUP) {
+		/* closed by peer */
+		close(ev->handle);
+		return;
+	}
+}
 static void getdmckey_handle_port(const uevent_t *ev)
 {
 	ipc_msg_t msg;
@@ -494,17 +569,22 @@ static void getdmckey_handle_port(const uevent_t *ev)
 			return;
 		}
 		chan = (handle_t) rc;
+		rc = set_cookie(chan, &_datasink_chan_handler);
+		if (rc)
+			TLOGI("failed (%d) to set_cookie on chan %d\n", rc, chan);
+
 		if (fused && (bootdone || dmcppsent)) {
-			TLOGI("%s: detected repeat offender\n", __func__);
+			TLOGI("DMCPP request disallowed\n");
 			memset(outkey, 0, sizeof(outkey));
 		} else if (dmcrypt_passphrase == NULL || dmcpplen == 0) {
-			TLOGE("%s: nothing to return\n", __func__);
+			TLOGE("DMCPP requested but not set\n");
 			memset(outkey, 0, sizeof(outkey));
+		} else {
 			SHA256_CTX c;
-			if (!(SHA256_Init(&c) == 0 &&
-			      SHA256_Update(&c, dmcrypt_passphrase, dmcpplen) == 0 &&
-			      SHA256_Update(&c, uid, sizeof(uid)) == 0 &&
-			      SHA256_Final(outkey, &c) == 0)) {
+			if (!(SHA256_Init(&c) &&
+			      SHA256_Update(&c, dmcrypt_passphrase, dmcpplen) &&
+			      SHA256_Update(&c, uid, sizeof(uid)) &&
+			      SHA256_Final(outkey, &c))) {
 				TLOGE("%s: outkey generation failed\n", __func__);
 				memset(outkey, 0, sizeof(outkey));
 			}
@@ -523,10 +603,9 @@ static void getdmckey_handle_port(const uevent_t *ev)
 			      rc, chan);
 		}
 
-		/* and close channel */
-		close(chan);
 		memset(outkey, 0, sizeof(outkey));
 		dmcppsent = true;
+		TLOGI("DMCPP retrieved by request\n");
 	}
 }
 
@@ -551,14 +630,18 @@ static void getfilekey_handle_port(const uevent_t *ev)
 			return;
 		}
 		chan = (handle_t) rc;
+		rc = set_cookie(chan, &_datasink_chan_handler);
+		if (rc)
+			TLOGI("failed (%d) to set_cookie on chan %d\n", rc, chan);
 		if (file_passphrase == NULL || filepplen == 0) {
-			TLOGE("%s: nothing to return\n", __func__);
+			TLOGE("FILEPP requested but not set\n");
 			memset(outkey, 0, sizeof(outkey));
+		} else {
 			SHA256_CTX c;
-			if (!(SHA256_Init(&c) == 0 &&
-			      SHA256_Update(&c, file_passphrase, filepplen) == 0 &&
-			      SHA256_Update(&c, uid, sizeof(uid)) == 0 &&
-			      SHA256_Final(outkey, &c) == 0)) {
+			if (!(SHA256_Init(&c) &&
+			      SHA256_Update(&c, file_passphrase, filepplen) &&
+			      SHA256_Update(&c, uid, sizeof(uid)) &&
+			      SHA256_Final(outkey, &c))) {
 				TLOGE("%s: outkey generation failed\n", __func__);
 				memset(outkey, 0, sizeof(outkey));
 			}
@@ -576,10 +659,8 @@ static void getfilekey_handle_port(const uevent_t *ev)
 			TLOGI("failed (%d) to send_msg for chan (%d)\n",
 			      rc, chan);
 		}
-
-		/* and close channel */
-		close(chan);
 		memset(outkey, 0, sizeof(outkey));
+		TLOGI("FILEPP retrieved by request\n");
 	}
 }
 
@@ -600,13 +681,11 @@ static void bootdone_handle_port(const uevent_t *ev)
 			return;
 		}
 		chan = (handle_t) rc;
-		TLOGI("Received boot done notification, stopping\n");
-		bootdone = true
-		rc = close(chan);
-		if (rc != NO_ERROR) {
-			TLOGI("%s: Failed (%d) to close chan %d\n",
-			      __func__, rc, chan);
-		}
+		rc = set_cookie(chan, &_datasink_chan_handler);
+		if (rc)
+			TLOGI("failed (%d) to set_cookie on chan %d\n", rc, chan);
+		TLOGI("Received boot done notification\n");
+		bootdone = true;
 	}
 }
 /*
@@ -623,7 +702,7 @@ int main(void)
 	uint8_t *ekb_base = NULL;
 	size_t ekb_size = 0;
 
-	TLOGI("Keystore: starting\n");
+	TLOGI("Starting\n");
 
 	r = is_device_odm_production_fused(&fused);
 	if (r != NO_ERROR) {
@@ -638,9 +717,6 @@ int main(void)
 		      __func__, r);
 		return r;
 	}
-	TLOGI("%s: device UID: 0x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",
-	      __func__, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7],
-	      uid[8], uid[9], uid[10], uid[11], uid[12], uid[13], uid[14], uid[15]);
 
 	/*
 	 * Must acquire SE mutex before using it
@@ -668,7 +744,6 @@ int main(void)
 		TLOGE("%s: EKB_EK derivation test failed (%d)\n", __func__, r);
 #endif
 
-
 	r = get_ekb(&ekb_base, &ekb_size);
 	if ((r != NO_ERROR) || (ekb_base == NULL) || (ekb_size == 0)) {
 		TLOGE("%s: failed to get EKB (%d). Exiting\n", __func__, r);
@@ -686,7 +761,7 @@ int main(void)
 
 	r = init_services();
 	if (r != NO_ERROR ) {
-		TLOGI("Failed (%d) to init service", r);
+		TLOGI("Failed (%d) to init services", r);
 		kill_services();
 		return r;
 	}
@@ -713,6 +788,12 @@ int main(void)
 			memset(dmcrypt_passphrase, 0, dmcpplen);
 		free(dmcrypt_passphrase);
 		dmcpplen = 0;
+	}
+	if (file_passphrase != NULL) {
+		if (filepplen != 0)
+			memset(file_passphrase, 0, filepplen);
+		free(file_passphrase);
+		filepplen = 0;
 	}
 	memset(keystore_iv, 0, sizeof(keystore_iv));
 	memset(keystore_fv, 0, sizeof(keystore_fv));

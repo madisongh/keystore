@@ -43,7 +43,7 @@ MODULE_SRCS += \
 MODULE_DEPS += \
 	app/trusty \
 	lib/libc-trusty \
-	external/boringssl \
+	external/boringssl
 
 # Two pages for stack
 MODULE_CFLAGS += -DMIN_STACK_SIZE=8192
