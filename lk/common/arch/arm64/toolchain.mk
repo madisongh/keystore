@@ -13,6 +13,7 @@ endif
 endif
 endif
 
-ARCH_arm64_COMPILEFLAGS := -mgeneral-regs-only -DWITH_NO_FP=1
+drop-option = $(if $(shell $(1) --help -v 2>/dev/null | grep -- $(2)),$(3),$(4))
+ARCH_arm64_COMPILEFLAGS := -mgeneral-regs-only -DWITH_NO_FP=1 $(call drop-option,$(ARCH_arm64_TOOLCHAIN_PREFIX)gcc,-Wcast-function-type,-Wno-cast-function-type,)
 
 endif
