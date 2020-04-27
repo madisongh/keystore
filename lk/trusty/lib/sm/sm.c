@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2013-2016 Google Inc. All rights reserved
+ * Copyright (c) 2019, NVIDIA CORPORATION. All rights reserved
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files
@@ -100,6 +101,12 @@ long smc_sm_api_version(smc32_args_t *args)
 
 static uint32_t sm_get_api_version(void)
 {
+	/* === Fix for 2689786 (boot failure) ===
+	 * Do not lock the API version because, the API version gets set only when
+	 * Linux comes up and there is race condition during HV boot when a call
+	 * to this function would lock the API version which is not expected.
+	 */
+#ifndef TRUSTY_EMBEDDED_BUILD
 	if (!sm_api_version_locked) {
 		spin_lock_saved_state_t state;
 		spin_lock_save(&sm_api_version_lock, &state, SPIN_LOCK_FLAG_IRQ_FIQ);
@@ -107,6 +114,7 @@ static uint32_t sm_get_api_version(void)
 		TRACEF("lock api version %d\n", sm_api_version);
 		spin_unlock_restore(&sm_api_version_lock, state, SPIN_LOCK_FLAG_IRQ_FIQ);
 	}
+#endif
 	return sm_api_version;
 }
 
@@ -270,8 +278,19 @@ static long sm_get_stdcall_ret(void)
 	} else {
 		if (sm_get_api_version() >= TRUSTY_API_VERSION_SMP) {/* ns using new api */
 			ret = SM_ERR_CPU_IDLE;
+
+		/* === Fix for 2689786 (boot failure) ===
+		 * If the caller does not understand SM_ERR_CPU_IDLE (low API version),
+		 * Returning SM_ERR_BUSY (Call back with original args) in this scenario
+		 * of SMC call waiting for another CPU leads to boot failure because the
+		 * expected behavior from the NS caller is not equivalent. So, return
+		 * SM_ERR_INTERRUPTED (Call back with restart SMC) instead which makes
+		 * the caller poll for the other CPU to finish.
+		 */
+#ifndef TRUSTY_EMBEDDED_BUILD
 		} else if (stdcallstate.restart_count) {
 			ret = SM_ERR_BUSY;
+#endif
 		} else {
 			ret = SM_ERR_INTERRUPTED;
 		}

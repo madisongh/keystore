@@ -121,6 +121,7 @@ EXTRA_BUILDRULES += app/trusty/user-tasks.mk
 #
 ifneq ($(filter l4t%, $(TRUSTY_VARIANT)),)
 include project/t186/t186-l4t.mk
-else
-include project/t186/t186-partner-inc.mk
 endif #TRUSTY_VARIANT
+ifeq ($(filter l4t l4t-public%, $(TRUSTY_VARIANT)),)
+include project/t186/t186-partner-inc.mk
+endif

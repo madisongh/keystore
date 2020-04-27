@@ -35,6 +35,8 @@ WITH_SMP=1
 # differentate between dev and customer style builds,
 ifeq ($(filter l4t%, $(TRUSTY_VARIANT)),)
 -include $(subst public,private,$(LOCAL_DIR))/rules.mk
+endif
+ifeq ($(filter l4t l4t-public%, $(TRUSTY_VARIANT)),)
 -include $(subst public,partner,$(LOCAL_DIR))/rules.mk
 endif
 

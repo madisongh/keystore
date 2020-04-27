@@ -42,7 +42,7 @@ ifneq ($(wildcard tegra/private),)
 endif
 
 # Build variants that use the ote-apps with an OTE-TIPC wrapper.
-ifneq ($(filter embedded-v2% android% mods% sim%, $(TRUSTY_VARIANT)),)
+ifneq ($(filter embedded-v2% android% mods% sim% l4t-partner-ote, $(TRUSTY_VARIANT)),)
         OTEROOT ?= $(TEGRA_TOP)/ote
         LKINC += $(OTEROOT)
 endif

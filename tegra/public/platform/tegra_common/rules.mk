@@ -29,6 +29,8 @@ COMMON_DIR := $(GET_LOCAL_DIR)
 # differentate between dev and customer style builds.
 ifeq ($(filter t186-l4t%, $(TARGET)-$(TRUSTY_VARIANT)),)
 -include $(subst public,private,$(COMMON_DIR))/rules.mk
+endif
+ifeq ($(filter t186-l4t t186-l4t-public%, $(TARGET)-$(TRUSTY_VARIANT)),)
 -include $(subst public,partner,$(COMMON_DIR))/rules.mk
 endif
 
