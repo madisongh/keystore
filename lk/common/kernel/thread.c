@@ -764,7 +764,7 @@ void thread_unblock(thread_t *t, bool resched)
 		thread_resched();
 }
 
-enum handler_return thread_timer_tick(void)
+enum handler_return thread_timer_tick(struct timer *t, lk_time_t now, void *arg)
 {
 	thread_t *current_thread = get_current_thread();
 
