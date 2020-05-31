@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: MIT
  *
- * Copyright (c) 2019, Matthew Madison.
+ * Copyright (c) 2019-2020, Matthew Madison.
  */
 
 #include <stdio.h>
@@ -10,26 +10,27 @@
 #include <getopt.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include "tipc.h"
 
 
-typedef void *kstool_ctx_t;
-
-typedef int (*option_routine_t)(kstool_ctx_t ctx, const char *arg);
+typedef int (*option_routine_t)(const char *arg, FILE *outf);
 
 static struct option options[] = {
-	{ "dmc-passphrase",	no_argument,	0, 'p' },
-	{ "file-passphrase",	no_argument,	0, 'f' },
-	{ "bootdone",		no_argument,	0, 'b' },
-	{ "help",		no_argument,	0, 'h' },
-	{ 0,			0,		0, 0   }
+	{ "dmc-passphrase",	no_argument,		0, 'p' },
+	{ "file-passphrase",	no_argument,		0, 'f' },
+	{ "bootdone",		no_argument,		0, 'b' },
+	{ "output",             required_argument,	0, 'o' },
+	{ "help",		no_argument,		0, 'h' },
+	{ 0,			0,			0, 0   }
 };
-static const char *shortopts = ":pfbh";
+static const char *shortopts = ":pfbo:h";
 
 static char *optarghelp[] = {
 	"--dmc-passphrase     ",
 	"--file-passphrase    ",
 	"--bootdone           ",
+	"--output             ",
 	"--help               ",
 };
 
@@ -37,6 +38,7 @@ static char *opthelp[] = {
 	"extract the dmcrypt passphrase",
 	"extract the file passphrase",
 	"set booting complete",
+	"file to write the passphrase to instead of stdout",
 	"display this help text"
 };
 
@@ -65,7 +67,7 @@ print_usage (void)
  *
  */
 static int
-get_passphrase (kstool_ctx_t ctx, const char *arg)
+get_passphrase (const char *arg, FILE *outf)
 {
 	char buf[256];
 	ssize_t n;
@@ -84,8 +86,8 @@ get_passphrase (kstool_ctx_t ctx, const char *arg)
 	}
 	tipc_close(fd);
 	for (i = 0; i < n; i++)
-		printf("%02x", buf[i]);
-	putchar('\n');
+		fprintf(outf, "%02x", buf[i]);
+	fputc('\n', outf);
 	return 0;
 
 } /* get_passphrase */
@@ -99,7 +101,8 @@ get_passphrase (kstool_ctx_t ctx, const char *arg)
  *
  */
 static int
-set_bootdone (kstool_ctx_t ctx, const char *arg __attribute__((unused)))
+set_bootdone (const char *arg __attribute__((unused)),
+	      FILE *outf __attribute__((unused)))
 {
 	int fd;
 
@@ -121,54 +124,78 @@ int
 main (int argc, char * const argv[])
 {
 	int c, which, ret;
-	kstool_ctx_t ctx = NULL;
 	option_routine_t dispatch = NULL;
 	const char *dispatch_arg = NULL;
+	char *outfile = NULL;
+	FILE *outf = stdout;
 
-	/*
-	 * For now, at least, we allow only one option to
-	 * be specified, so argc must be exactly 2.
-	 */
-	if (argc != 2) {
+	if (argc < 2) {
 		print_usage();
 		return 1;
 	}
 
-	c = getopt_long_only(argc, argv, shortopts, options, &which);
-	if (c == -1) {
-		perror("getopt");
-		print_usage();
-		return 1;
+	while ((c = getopt_long_only(argc, argv, shortopts, options, &which)) != -1) {
+
+		switch (c) {
+
+			case 'h':
+				print_usage();
+				return 0;
+			case 'p':
+				dispatch = get_passphrase;
+				dispatch_arg = "private.keystore.getdmckey";
+				break;
+			case 'f':
+				dispatch = get_passphrase;
+				dispatch_arg = "private.keystore.getfilekey";
+				break;
+			case 'b':
+				dispatch = set_bootdone;
+				break;
+			case 'o':
+				outfile = strdup(optarg);
+				break;
+			default:
+				fprintf(stderr, "Error: unrecognized option\n");
+				print_usage();
+				return 1;
+		}
 	}
 
-	switch (c) {
-
-		case 'h':
-			print_usage();
-			return 0;
-		case 'p':
-			dispatch = get_passphrase;
-			dispatch_arg = "private.keystore.getdmckey";
-			break;
-		case 'f':
-			dispatch = get_passphrase;
-			dispatch_arg = "private.keystore.getfilekey";
-			break;
-		case 'b':
-			dispatch = set_bootdone;
-			break;
-		default:
-			fprintf(stderr, "Error: unrecognized option\n");
-			print_usage();
-			return 1;
+	if (optind < argc) {
+		fprintf(stderr, "Error: unrecognized extra arguments\n");
+		print_usage();
+		return 1;
 	}
 
 	if (dispatch == NULL) {
-		fprintf(stderr, "Error in option processing\n");
+		fprintf(stderr, "No operation specified\n");
+		print_usage();
 		return 1;
 	}
 
-	ret = dispatch(ctx, dispatch_arg);
+	if (outfile != NULL && dispatch == get_passphrase) {
+		int fd = open(outfile, O_CREAT|O_WRONLY|O_TRUNC, S_IRUSR|S_IWUSR);
+		if (fd < 0) {
+			perror(outfile);
+			return 1;
+		}
+		outf = fdopen(fd, "w");
+		if (outf == NULL) {
+			perror(outfile);
+			close(fd);
+			unlink(outfile);
+			return 1;
+		}
+	}
+
+	ret = dispatch(dispatch_arg, outf);
+	if (outf != stdout) {
+		if (fclose(outf) == EOF) {
+			perror(outfile);
+			ret = 1;
+		}
+	}
 
 	return ret;
 
