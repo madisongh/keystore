@@ -58,8 +58,13 @@ static uint8_t keystore_iv[16] = { KEYSTORE_IV };
  * Device unique ID, used as salt added to
  * the key extracted from the EKB when generating
  * a passphrase sent to the NS client.
+ *
+ * The UID (ECID) is 32 bytes total, of which
+ * only the first 16 bytes are significant; the
+ * last 16 bytes are zeroes.
  */
-static uint8_t uid[16];
+#define UID_LEN 16
+static uint8_t uid[32];
 
 static uint8_t *dmcrypt_passphrase = NULL;
 static size_t dmcpplen = 0;
@@ -583,7 +588,7 @@ static void getdmckey_handle_port(const uevent_t *ev)
 			SHA256_CTX c;
 			if (!(SHA256_Init(&c) &&
 			      SHA256_Update(&c, dmcrypt_passphrase, dmcpplen) &&
-			      SHA256_Update(&c, uid, sizeof(uid)) &&
+			      SHA256_Update(&c, uid, UID_LEN) &&
 			      SHA256_Final(outkey, &c))) {
 				TLOGE("%s: outkey generation failed\n", __func__);
 				memset(outkey, 0, sizeof(outkey));
@@ -640,7 +645,7 @@ static void getfilekey_handle_port(const uevent_t *ev)
 			SHA256_CTX c;
 			if (!(SHA256_Init(&c) &&
 			      SHA256_Update(&c, file_passphrase, filepplen) &&
-			      SHA256_Update(&c, uid, sizeof(uid)) &&
+			      SHA256_Update(&c, uid, UID_LEN) &&
 			      SHA256_Final(outkey, &c))) {
 				TLOGE("%s: outkey generation failed\n", __func__);
 				memset(outkey, 0, sizeof(outkey));
