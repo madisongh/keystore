@@ -1,6 +1,6 @@
 # trusty-l4t with static keystore
 
-Based on the L4T R32.2.3 sources for the Trusty TEE for
+Based on the L4T R32.4.3 sources for the Trusty TEE for
 the Jetson-TX2 and Jetson AGX Xavier platforms.
 
 The keystore-demo and ipc-unittest trusted apps (TAs) are

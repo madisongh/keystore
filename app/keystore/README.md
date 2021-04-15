@@ -5,7 +5,7 @@ storage container in a format that is compatible
 with the vendor-provided "encrypted keyblob" (EKB)
 support in the flashing tools and bootloaders
 for the Jetson-TX2 and Jetson AGX Xavier platforms,
-as of L4T R32.2.3.
+as of L4T R32.4.3.
 
 ## Usage
 
@@ -23,6 +23,11 @@ As mentioned in the L4T documentation, you should
 program both an RSA signing key and an SBK secure
 boot encryption key to encrypt *and* sign the bootloaders
 and secure OS image.
+
+Note that the NVIDIA-provided Trusty sources were
+updated in L4T R32.5.0 with fuller-featured sample
+applications, which may be a better starting point
+for developing a custom TA.
 
 ### Preparing the EKB
 
