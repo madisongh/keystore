@@ -49,7 +49,7 @@
  * key derived from HW-backed key which may used to
  * encrypt/decrypt EKB.
  */
-static uint8_t ekb_ek[AES_KEY_128_SIZE] = {0};
+static uint8_t root_key[AES_KEY_128_SIZE] = {0};
 
 static uint8_t keystore_fv[16] = { KEYSTORE_FV };
 static uint8_t keystore_iv[16] = { KEYSTORE_IV };
@@ -233,7 +233,7 @@ static int decrypt_ekb(uint8_t *ekb, size_t ekb_size)
 		TLOGE("%s: keystore size invalid\n", __func__);
 		return r;
 	}
-	if (AES_set_decrypt_key(ekb_ek, sizeof(ekb_ek)*8, &key) != 0) {
+	if (AES_set_decrypt_key(root_key, sizeof(root_key)*8, &key) != 0) {
 		TLOGE("%s: failed to set decryption key\n", __func__);
 		return r;
 	}
@@ -732,7 +732,8 @@ int main(void)
 		return r;
 	}
 
-	r = se_derive_ekb_ek(ekb_ek, sizeof(ekb_ek), keystore_fv, sizeof(keystore_fv));
+	r = se_derive_root_key(root_key, sizeof(root_key), keystore_fv, sizeof(keystore_fv),
+			       SE_AES_KEYSLOT_KEK2_128B);
 	if (r != NO_ERROR)
 		TLOGE("%s: failed to derive EKB (%d)\n", __func__, r);
 
@@ -744,7 +745,7 @@ int main(void)
 	se_release();
 
 #if defined(ENABLE_TEST_EKB_DERIVATION)
-	r = ekb_ek_derivation_test(keystore_fv, ekb_ek);
+	r = ekb_ek_derivation_test(keystore_fv, root_key);
 	if (r != NO_ERROR)
 		TLOGE("%s: EKB_EK derivation test failed (%d)\n", __func__, r);
 #endif
@@ -802,6 +803,6 @@ int main(void)
 	}
 	memset(keystore_iv, 0, sizeof(keystore_iv));
 	memset(keystore_fv, 0, sizeof(keystore_fv));
-	memset(ekb_ek, 0, sizeof(ekb_ek));
+	memset(root_key, 0, sizeof(root_key));
 	return NO_ERROR;
 }
