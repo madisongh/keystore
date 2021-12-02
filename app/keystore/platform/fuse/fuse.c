@@ -28,7 +28,7 @@
 
 #include <trusty_std.h>
 
-#include <keystore.h>
+#include <common.h>
 #include <fuse.h>
 
 #define FUSE_SECURITY_MODE_0_OFFSET		0x1a0

@@ -35,7 +35,7 @@
 #include <app/keystore/uuids.h>
 #include <app/keystore/vectors.h>
 #include <app/keystore/keyblob.h>
-#include <keystore.h>
+#include <common.h>
 #include <keystore_tests.h>
 #include <tegra_se.h>
 #include <fuse.h>

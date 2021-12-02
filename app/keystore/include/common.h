@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, NVIDIA Corporation. All Rights Reserved.
+ * Copyright (c) 2020-2021, NVIDIA Corporation. All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -20,11 +20,14 @@
  * THE SOFTWARE.
  */
 
-#ifndef __KEYSTORE_DEMO_H__
-#define __KEYSTORE_DEMO_H__
+#ifndef __COMMON_H__
+#define __COMMON_H__
+
+#define AES_BLOCK_SIZE		16
+#define AES_KEY_128_SIZE	16
+#define AES_KEY_256_SIZE	32
 
 #define LOCAL_TRACE 1
-
 #define LOG_TAG	"keystore"
 
 #define TLOGE(fmt, ...) \
@@ -37,4 +40,4 @@
 #define TLOGI(fmt, ...)
 #endif
 
-#endif /* __KEYSTORE_DEMO_H__ */
+#endif /* __COMMON_H__ */

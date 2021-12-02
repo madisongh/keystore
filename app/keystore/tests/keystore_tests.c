@@ -32,7 +32,7 @@
 
 #include <openssl/aes.h>
 
-#include <keystore.h>
+#include <common.h>
 #include <keystore_tests.h>
 #include <fuse.h>
 
