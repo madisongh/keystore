@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, NVIDIA Corporation. All Rights Reserved.
+ * Copyright (c) 2020-2021, NVIDIA Corporation. All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -20,12 +20,15 @@
  * THE SOFTWARE.
  */
 
-#ifndef __KEYSTORE_DEMO_TEGRA_SE_CONFIG_H__
-#define __KEYSTORE_DEMO_TEGRA_SE_CONFIG_H__
+#ifndef __TEGRA_SE_CONFIG_H__
+#define __TEGRA_SE_CONFIG_H__
 
 #define TEGRA_SE_KEYSLOT_COUNT		16
 
+#define TEGRA_SE_AES_BLOCK_SIZE		16
+#define TEGRA_SE_AES_IV_SIZE		16
 #define TEGRA_SE_KEY_128_SIZE		16
+#define TEGRA_SE_KEY_256_SIZE		32
 
 #define SE_INT_STATUS_REG_OFFSET	0x2f0 // SE0_AES0_INT_STATUS_0
 #define SE_KEYTABLE_DATA0_REG_OFFSET	0x2c0 // SE0_AES0_CRYPTO_KEYTABLE_DATA_0
@@ -37,7 +40,13 @@
 
 #define SE_CRYPTO_XOR_POS_SHIFT		1 // SE0_AES0_CRYPTO_CONFIG_0_XOR_POS_SHIFT
 #define XOR_BYPASS			0
+#define XOR_TOP				2
 #define SE_CRYPTO_XOR_POS(x)		(x << SE_CRYPTO_XOR_POS_SHIFT)
+
+#define SE_CRYPTO_IV_SEL_SHIFT		7
+#define IV_ORIGINAL			0
+#define IV_UPDATED			1
+#define SE_CRYPTO_IV_SEL(x)		(x << SE_CRYPTO_IV_SEL_SHIFT)
 
 #define SE_CRYPTO_CORE_SEL_SHIFT	9 // SE0_AES0_CRYPTO_CONFIG_0_CORE_SEL_SHIFT
 #define CORE_ENCRYPT			1
@@ -48,6 +57,7 @@
 
 #define SE_CRYPTO_HASH_SHIFT		0  // SE0_AES0_CRYPTO_CONFIG_0_HASH_ENB_SHIFT
 #define HASH_DISABLE			0
+#define HASH_ENABLE			1
 #define SE_CRYPTO_HASH(x)		(x << SE_CRYPTO_HASH_SHIFT)
 
 #define SE_CONFIG_ENC_ALG_SHIFT		12 // SE0_AES0_CONFIG_0_ENC_ALG_SHIFT
@@ -58,12 +68,13 @@
 #define SE_CONFIG_DEC_ALG(x)		(x << SE_CONFIG_DEC_ALG_SHIFT)
 
 #define SE_CONFIG_ENC_MODE_SHIFT	24  // SE0_AES0_CONFIG_0_ENC_MODE_SHIFT
-#define AES_MODE_KEY128		0               // SE_MODE_PKT_AESAES_MODE_KEY128
+#define AES_MODE_KEY128			0   // SE_MODE_PKT_AESAES_MODE_KEY128
+#define AES_MODE_KEY256			2   // SE_MODE_PKT_AESAES_MODE_KEY256
 #define SE_CONFIG_ENC_MODE(x)		(x << SE_CONFIG_ENC_MODE_SHIFT)
 
 #define SE_CONFIG_DST_SHIFT		2   // SE0_AES0_CONFIG_0_DST_SHIFT
-#define DST_MEMORY		0
-#define SE_CONFIG_DST(x)			(x << SE_CONFIG_DST_SHIFT)
+#define DST_MEMORY			0
+#define SE_CONFIG_DST(x)		(x << SE_CONFIG_DST_SHIFT)
 
 #define SE_CRYPTO_REG_OFFSET		0x208 // SE0_AES0_CRYPTO_CONFIG_0
 #define SE_CONFIG_REG_OFFSET		0x204 // SE0_AES0_CONFIG_0
@@ -78,8 +89,8 @@
 #define SE_OPERATION_REG_OFFSET		0x238 // SE0_AES0_OPERATION_0
 #define LASTBUF_TRUE			16
 #define SE_OPERATION_SHIFT		0
-#define OP_SRART		1 | (1 << LASTBUF_TRUE)
-#define SE_OPERATION(x)		(x << SE_OPERATION_SHIFT)
+#define OP_SRART			1 | (1 << LASTBUF_TRUE)
+#define SE_OPERATION(x)			(x << SE_OPERATION_SHIFT)
 
 #define SE_STATUS			0x2f4 // SE0_AES0_STATUS_0
 
@@ -87,4 +98,4 @@
 #define SE0_MUTEX_REQUEST_RELEASE_0_LOCK_TRUE 0x1
 #define SE0_MUTEX_STATUS 0x64
 
-#endif /* __KEYSTORE_DEMO_TEGRA_SE_CONFIG_H__ */
+#endif /* __TEGRA_SE_CONFIG_H__ */

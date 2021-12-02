@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, NVIDIA Corporation. All Rights Reserved.
+ * Copyright (c) 2020-2021, NVIDIA Corporation. All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -20,10 +20,9 @@
  * THE SOFTWARE.
  */
 
-#ifndef __KEYSTORE_DEMO_TEGRA_SE_INTERNAL_H__
-#define __KEYSTORE_DEMO_TEGRA_SE_INTERNAL_H__
+#ifndef __TEGRA_SE_INTERNAL_H__
+#define __TEGRA_SE_INTERNAL_H__
 
-#include <tegra_se.h>
 #include <tegra_se_aes_config.h>
 
 #define SE_REGW(B, A, V) \
@@ -39,6 +38,10 @@
 #define SE_KEYTABLE_WORD(x)		((x) << (SE_KEYTABLE_WORD_SHIFT))
 
 #define AES_QUAD_KEYS		0
+#define AES_QUAD_KEYS_256	1
+#define AES_QUAD_ORG_IV		2
+#define AES_QUAD_UPDTD_IV	3
+#define AES_QUAD_MAX		AES_QUAD_UPDTD_IV
 
 typedef enum
 {
@@ -58,16 +61,33 @@ typedef enum
 	SE_AES_KEYSLOT_KEK1E_128B = SE_AES_KEYSLOT_13,
 	SE_AES_KEYSLOT_KEK1G_128B = SE_AES_KEYSLOT_12,
 	SE_AES_KEYSLOT_KEK2_128B = SE_AES_KEYSLOT_11,
+
+	SE_AES_KEYSLOT_KEK256 = SE_AES_KEYSLOT_13,
 } se_aes_keyslot_t;
 
+/* Security Engine Operation Modes */
+typedef enum
+{
+	SE_AES_OP_MODE_CBC,	/* Cipher Block Chaining (CBC) mode */
+	SE_AES_OP_MODE_CMAC,	/* Cipher-based MAC (CMAC) mode */
+	SE_AES_OP_MODE_ECB,	/* Electronic Codebook (ECB) mode */
+} se_aes_op_mode;
+
 uint32_t get_nv_se_base(void);
+uint32_t se_get_config(se_aes_op_mode mode, uint32_t keylen);
+uint32_t se_get_crypto_config(se_aes_op_mode mode, uint32_t keyslot, bool org_iv);
+uint32_t se_prepare_dma(void *addr, uint64_t *paddr, uint32_t size, bool write);
+long se_finish_dma(void *regs, uint32_t size, bool write);
+int se_start_operation(uint32_t config, uint32_t crypto_config,
+		       uint8_t *src, size_t src_len,
+		       uint8_t *dst, size_t dst_len);
 
 /*************************
  * AES operations
  *************************/
 
 uint32_t se_aes_ecb_operation(unsigned char* src, size_t src_len,
-		unsigned char*dst, size_t dst_len,
-		unsigned int keyslot);
+			      unsigned char*dst, size_t dst_len,
+			      unsigned int keyslot);
 
-#endif /* __KEYSTORE_DEMO_TEGRA_SE_INTERNAL_H__ */
+#endif /* __TEGRA_SE_INTERNAL_H__ */
