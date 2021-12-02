@@ -42,7 +42,6 @@
 #include <openssl/aes.h>
 #include <openssl/sha.h>
 
-#define AES_KEY_128_SIZE	16
 #define MAX_MSG_SIZE		2048
 
 /*
@@ -723,15 +722,6 @@ int main(void)
 		return r;
 	}
 
-	/*
-	 * Must acquire SE mutex before using it
-	 */
-	r = se_acquire();
-	if (r != NO_ERROR) {
-		TLOGE("%s: failed to initialize SE (%d). Exiting\n",__func__, r);
-		return r;
-	}
-
 	r = se_derive_root_key(root_key, sizeof(root_key), keystore_fv, sizeof(keystore_fv),
 			       SE_AES_KEYSLOT_KEK2_128B);
 	if (r != NO_ERROR)
@@ -742,7 +732,6 @@ int main(void)
 	if (r != NO_ERROR)
 		TLOGE("%s: failed to clear SE keyslots (%d)\n", __func__, r);
 
-	se_release();
 
 #if defined(ENABLE_TEST_EKB_DERIVATION)
 	r = ekb_ek_derivation_test(keystore_fv, root_key);
