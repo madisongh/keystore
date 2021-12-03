@@ -12,6 +12,7 @@ MODULE_SRCS := \
 	$(LOCAL_DIR)/atexit.c \
 	$(LOCAL_DIR)/exit.c \
 	$(LOCAL_DIR)/malloc.c \
+	$(LOCAL_DIR)/rand_init.c \
 	$(LOCAL_DIR)/stdio.c \
 	$(LOCAL_DIR)/libc_init.c \
 	$(LOCAL_DIR)/libc_fatal.c \

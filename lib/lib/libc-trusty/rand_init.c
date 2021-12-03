@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2008 Travis Geiselbrecht
- * Copyright (c) 2012-2021, NVIDIA CORPORATION. All rights reserved
+ * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files
@@ -21,34 +20,18 @@
  * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
-#ifndef __PLATFORM_P_H
-#define __PLATFORM_P_H
 
-#include <lib/trusty/uuid.h>
-#include <stdbool.h>
-#include <lib/sm.h>
-#if defined(WITH_PLATFORM_PARTNER)
-#include <partner/platform/platform_p.h>
-#endif
+#include <trusty_std.h>
+#include <rand.h>
 
-/* Structure to hold EKS information */
-typedef struct {
-	paddr_t paddr;
-	uint32_t blob_length;
-} eks_info_t;
+static void __attribute((constructor(1000))) __rand_init(void) {
+	uint64_t time;
+	uint32_t seed;
 
-status_t get_and_clear_eks_info(eks_info_t *info);
-
-void platform_init_debug_port(unsigned int dbg_port);
-void platform_disable_debug_intf(void);
-void platform_enable_debug_intf(void);
-bool platform_is_bootstrapping(void);
-void tegra_platform_bootstrap_epilog(void);
-long platform_register_ns_dram_ranges(paddr_t ns_base, uint64_t ns_size);
-status_t platform_validate_ns_phys_range(paddr_t ns_addr, uint64_t ns_size);
-bool platform_validate_range(uint64_t bound_base, uint64_t bound_size,
-				uint64_t test_base, uint64_t test_size);
-bool platform_is_denver_cpu(void);
-void platform_libc_rand_init(void);
-
-#endif
+	gettime(0U, 0U, &time);
+	seed = (uint32_t)(((time >> 32) ^ time) & 0xFFFFFFFFULL);
+	srand(seed);
+	gettime(0U, 0U, &time);
+	seed = (uint32_t)(((time >> 32) ^ time) & 0xFFFFFFFFULL);
+	rand_add_entropy(&seed, sizeof(uint32_t));
+}

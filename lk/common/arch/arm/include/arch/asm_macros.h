@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2015, Google Inc. All rights reserved
+ * Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files
@@ -29,4 +30,14 @@
     .long    .Lfault_location\@
     .long    \handler
 .popsection
+.endm
+
+/* Return from exception
+ * dsb and isb after ERET instruction prevent speculative access past it.
+ * More details: nvbugs/2790895
+ * */
+.macro exception_return
+    eret
+    dsb nsh
+    isb
 .endm

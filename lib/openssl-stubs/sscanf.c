@@ -25,67 +25,7 @@
  * SUCH DAMAGE.
  */
 
-#include <err.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <sys/types.h>
-#include <openssl/rand.h>
-
-#if defined(OPENSSL_IS_BORINGSSL)
-
-#include <lib/rng/trusty_rng.h>
-
-/* CRYPTO_sysrand is called by BoringSSL to obtain entropy from the OS. By
- * default, BoringSSL's RNG calls this function without buffering. */
-void CRYPTO_sysrand(uint8_t *out, size_t requested)
+int sscanf(const char *str, const char *fmt, ...)
 {
-	if (trusty_rng_secure_rand(out, requested) != NO_ERROR) {
-		abort();
-	}
+	return 0;
 }
-
-#else
-
-#include <crypto/rand.h>
-#include <trusty_std.h>
-
-int rand_pool_init(void)
-{
-    return 1;
-}
-
-void rand_pool_cleanup(void)
-{
-}
-
-void rand_pool_keep_random_devices_open(int keep)
-{
-}
-
-size_t rand_pool_acquire_entropy(RAND_POOL *pool)
-{
-    return rand_pool_entropy_available(pool);
-}
-
-int rand_pool_add_nonce_data(RAND_POOL *pool)
-{
-    struct {
-        uint64_t time;
-    } rinfo;;
-
-    /*
-     * Add a high resolution timestamp to
-     * ensure that the nonce is unique with high probability for
-     * different process instances.
-     */
-    (void)gettime(1, 1, &rinfo.time);
-
-    return rand_pool_add(pool, (unsigned char *)&rinfo, sizeof(rinfo), 0);
-}
-
-int rand_pool_add_additional_data(RAND_POOL *pool)
-{
-    return rand_pool_add_nonce_data(pool);
-}
-
-#endif  /* OPENSSL_IS_BORINGSSL */

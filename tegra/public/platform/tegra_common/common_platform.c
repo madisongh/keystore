@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2019, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2016-2021, NVIDIA CORPORATION. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files
@@ -22,6 +22,8 @@
  */
 
 #include <debug.h>
+#include <rand.h>
+#include <platform.h>
 #include <platform/platform_p.h>
 #include <err.h>
 #include <string.h>
@@ -262,4 +264,16 @@ bool platform_is_denver_cpu(void)
 		return true;
 	else
 		return false;
+}
+
+void platform_libc_rand_init(void) {
+	uint64_t time;
+	uint32_t seed;
+
+	time = current_time_hires();
+	seed = (uint32_t)(((time >> 32) ^ time) & 0xFFFFFFFFULL);
+	srand(seed);
+	time = current_time_hires();
+	seed = (uint32_t)(((time >> 32) ^ time) & 0xFFFFFFFFULL);
+	rand_add_entropy(&seed, sizeof(uint32_t));
 }

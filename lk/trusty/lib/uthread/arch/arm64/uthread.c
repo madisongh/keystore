@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013-2014, Google Inc. All rights reserved
- * Copyright (c) 2012-2019, NVIDIA CORPORATION. All rights reserved
+ * Copyright (c) 2012-2020, NVIDIA CORPORATION. All rights reserved
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files
@@ -58,6 +58,8 @@ void arch_uthread_startup(void)
 		"msr	spsr_el1, x9\n"
 		"msr	elr_el1, %[entry]\n"
 		"eret\n"
+		"dsb nsh\n" /* Prevent speculative access across ERET instruction */
+		"isb\n"
 		:
 		: [stack]"r" (sp_usr), [entry]"r" (entry)
 		: "x0", "x1", "memory"

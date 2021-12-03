@@ -25,67 +25,45 @@
  * SUCH DAMAGE.
  */
 
-#include <err.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <sys/types.h>
-#include <openssl/rand.h>
+#ifndef OPENSSL_STUB_TIME_H
+#define OPENSSL_STUB_TIME_H
 
-#if defined(OPENSSL_IS_BORINGSSL)
+#include <string.h>
 
-#include <lib/rng/trusty_rng.h>
+typedef int time_t;
 
-/* CRYPTO_sysrand is called by BoringSSL to obtain entropy from the OS. By
- * default, BoringSSL's RNG calls this function without buffering. */
-void CRYPTO_sysrand(uint8_t *out, size_t requested)
+struct tm {
+	int tm_sec;         /* seconds */
+	int tm_min;         /* minutes */
+	int tm_hour;        /* hours */
+	int tm_mday;        /* day of the month */
+	int tm_mon;         /* month */
+	int tm_year;        /* year */
+	int tm_wday;        /* day of the week */
+	int tm_yday;        /* day in the year */
+	int tm_isdst;       /* daylight saving time */
+
+	long int tm_gmtoff;     /* Seconds east of UTC.  */
+	const char *tm_zone;    /* Timezone abbreviation.  */
+};
+
+static inline time_t time(time_t *t)
 {
-	if (trusty_rng_secure_rand(out, requested) != NO_ERROR) {
-		abort();
-	}
+	return 0;
 }
 
-#else
-
-#include <crypto/rand.h>
-#include <trusty_std.h>
-
-int rand_pool_init(void)
+static inline struct tm *localtime(const time_t *t)
 {
-    return 1;
+	return 0;
 }
 
-void rand_pool_cleanup(void)
-{
+static inline struct tm *OPENSSL_gmtime(const time_t *timer, struct tm* result) {
+	memset(result, 0, sizeof(*result));
+	return result;
 }
 
-void rand_pool_keep_random_devices_open(int keep)
-{
+static inline int OPENSSL_gmtime_adj(struct tm *tm, int offset_day, long offset_sec) {
+	return 0;
 }
 
-size_t rand_pool_acquire_entropy(RAND_POOL *pool)
-{
-    return rand_pool_entropy_available(pool);
-}
-
-int rand_pool_add_nonce_data(RAND_POOL *pool)
-{
-    struct {
-        uint64_t time;
-    } rinfo;;
-
-    /*
-     * Add a high resolution timestamp to
-     * ensure that the nonce is unique with high probability for
-     * different process instances.
-     */
-    (void)gettime(1, 1, &rinfo.time);
-
-    return rand_pool_add(pool, (unsigned char *)&rinfo, sizeof(rinfo), 0);
-}
-
-int rand_pool_add_additional_data(RAND_POOL *pool)
-{
-    return rand_pool_add_nonce_data(pool);
-}
-
-#endif  /* OPENSSL_IS_BORINGSSL */
+#endif /* OPENSSL_STUB_TIME_H  */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2015-2021, NVIDIA CORPORATION. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files
@@ -190,6 +190,7 @@ void platform_app_bootloader_epilog(void)
 void platform_early_init(void)
 {
 	arm_generic_timer_init(ARM_GENERIC_TIMER_INT, 0);
+	platform_libc_rand_init();
 }
 
 void platform_init(void)

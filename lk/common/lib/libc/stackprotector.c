@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2017, NVIDIA CORPORATION. All rights reserved
+ * Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files
@@ -23,15 +23,16 @@
 
 #include <rand.h>
 
-unsigned int __stack_chk_guard = 0xaff;
+unsigned int __stack_chk_guard;
 
-static void __attribute__((constructor)) __guard_setup (void){
-        /* 
-         * included for future use. rand.h must be seeded and -fstack_protector must be disabled in
-         * stack contexts preceeding this call.
-         */
-  	if ( __stack_chk_guard == 0U )
-  		__stack_chk_guard = rand();
+static void __attribute__((constructor)) __stack_chk_guard_setup(void) {
+	/*
+	 * included for future use. rand.h must be seeded and -fstack_protector must be disabled in
+	 * stack contexts preceeding this call.
+	 */
+	while (__stack_chk_guard == 0U) {
+		__stack_chk_guard = rand();
+	}
 }
 
 #define TRUSTY_LIBC_BREAK() \
@@ -40,10 +41,10 @@ static void __attribute__((constructor)) __guard_setup (void){
 		volatile unsigned int *_px =				\
 					(volatile unsigned int *) &_x;	\
 		while (*_px == *_px) { }				\
-	} while (1);
+	} while (1)
 
 void __attribute__((noreturn)) __stack_chk_fail(void);
 void __attribute__((noreturn)) __stack_chk_fail(void)
 {
-	TRUSTY_LIBC_BREAK()
+	TRUSTY_LIBC_BREAK();
 }

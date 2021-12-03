@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2014 Travis Geiselbrecht
+ * Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files
@@ -81,7 +82,7 @@ FUNCTION(arm64_el3_to_el1)
     msr spsr_el3, x0
     isb
 
-    eret
+    exception_return
 
 .Ltarget:
     ret

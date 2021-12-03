@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, NVIDIA CORPORATION. All rights reserved
+ * Copyright (c) 2018-2021, NVIDIA CORPORATION. All rights reserved
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files
@@ -69,8 +69,13 @@ int32_t sys_std_platform_ioctl(uint32_t fd, uint32_t cmd, user_addr_t user_ptr)
 			}
 
 			ioctl_map_eks_params params;
-			copy_from_user(&params, user_ptr,
-					sizeof(ioctl_map_eks_params));
+			ret = copy_from_user(&params, user_ptr,
+						sizeof(ioctl_map_eks_params));
+			if (ret != NO_ERROR) {
+				dprintf(CRITICAL, "%s: ERROR(%d) in copy from user\n",
+						__func__, ret);
+				return ret;
+			}
 
 			return ioctl_map_eks_to_user(params);
 
@@ -79,7 +84,7 @@ int32_t sys_std_platform_ioctl(uint32_t fd, uint32_t cmd, user_addr_t user_ptr)
 			    !valid_address((vaddr_t)user_ptr,
 					   sizeof(uint32_t) * DEVICE_UID_SIZE_WORDS)) {
 				dprintf(CRITICAL, "%s error: Invalid arguments\n",
-						__func__);
+					__func__);
 				return ERR_INVALID_ARGS;
 			}
 			return ioctl_get_device_uid(user_ptr);
