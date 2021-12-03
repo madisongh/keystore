@@ -5,16 +5,19 @@ storage container in a format that is compatible
 with the vendor-provided "encrypted keyblob" (EKB)
 support in the flashing tools and bootloaders
 for the Jetson-TX2 and Jetson AGX Xavier platforms,
-as of L4T R32.4.3.
+as of L4T R32.6.1.
 
 ## Usage
 
 For background on the vendor-supplied support for
 secure boot and the Trusty TEE, see the
 [Security](https://docs.nvidia.com/jetson/l4t/Tegra%20Linux%20Driver%20Package%20Development%20Guide/security.html#) chapter in the L4T on-line documentation.
-Keystore uses the same EKB format described in the
-documentation, for compatibility with the Tegra
-MB2 bootloader.
+Keystore uses an EKB format that is compatible
+with the Tegra MB2 bootloader. The EKB contents
+are different from those used by sample TAs provied
+in L4T R32.5 and later, to retain compatibility
+with the original Keystore implementation that
+was based on the samples in earlier L4T releases.
 
 Keystore can be tested on non-secured devices,
 to verify basic functionality.
@@ -22,12 +25,17 @@ to verify basic functionality.
 As mentioned in the L4T documentation, you should
 program both an RSA signing key and an SBK secure
 boot encryption key to encrypt *and* sign the bootloaders
-and secure OS image.
+and secure OS image. Unlike the sample TAs provided
+in the L4T R32.6.1 BSP, this TA does *not* support
+decrypting your Linux kernel image.
 
-Note that the NVIDIA-provided Trusty sources were
-updated in L4T R32.5.0 with fuller-featured sample
-applications, which may be a better starting point
-for developing a custom TA.
+### Updating the FV and IV
+
+Before using Keystore for your own devices, you should
+update the [vectors.h header file](include/app/keystore/vectors.h)
+with your own randomly-generated 16-byte sequences for the
+Fixed Vector and Initialization Vector used for the
+processing of the KEK and EKB contents.
 
 ### Preparing the EKB
 
@@ -69,18 +77,18 @@ a sequence of TLV (tag/length/value) tuples.
 Tag and length are 16-bits, little-endian.
 The following tag values are recognized:
 
-* KEYSTORE_TAG_DMCPP: value is a passphrase
+* `KEYSTORE_TAG_DMCPP`: value is a passphrase
   to be used for dm-crypt partition encryption.
   This passphrase can be retrieved by the
   non-secure OS exactly once when operating
   in secure mode ("ODM production mode" fuse
   set).
   
-* KEYSTORE_TAG_FILEPP: value is a passphrase
+* `KEYSTORE_TAG_FILEPP`: value is a passphrase
   that can be used for encrypting individual
   files.  No limit on number of retrievals.
 
-* KEYSTORE_TAG_EOL: marks the end of the
+* `KEYSTORE_TAG_EOL`: marks the end of the
   keystore.  Length must also be zero.
 
 Once the keystore has been parsed, Keystore

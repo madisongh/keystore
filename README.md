@@ -1,9 +1,9 @@
 # trusty-l4t with static keystore
 
-Based on the L4T R32.4.3 sources for the Trusty TEE for
+Based on the L4T R32.6.1 sources for the Trusty TEE for
 the Jetson-TX2 and Jetson AGX Xavier platforms.
 
-The keystore-demo and ipc-unittest trusted apps (TAs) are
+The NVIDIA demo and ipc-unittest trusted apps (TAs) are
 removed, and a static key storage TA, just called "keystore",
 is implemented.  See [the README file](app/keystore/README.md)
 for keystore for more information.
